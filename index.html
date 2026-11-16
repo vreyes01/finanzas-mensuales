@@ -389,7 +389,7 @@ function settingsView(){
   h+=`<div class="card"><div class="hd"><h2>Tipos de cambio</h2>${st.ratesUpdated?`<span class="small mute">Actualizado ${esc(st.ratesUpdated)}</span>`:''}</div><p class="small mute" style="margin:0 0 8px">Indica cuánto vale 1 unidad de cada moneda en <b>${esc(st.base)}</b>. Los valores son manuales: actualízalos cuando cambie el dólar u otra moneda.</p>${rates.length?rates.map(([c,r])=>`<div class="rate"><span style="min-width:62px">1 ${esc(c)} =</span><input class="num" type="text" inputmode="decimal" data-rate="${esc(c)}" value="${esc(fmtInput(r))}"><span>${esc(st.base)}</span><button class="btn sm dng x" data-act="rmRate" data-id="${esc(c)}">Quitar</button></div>`).join(''):'<div class="empty">Aún no agregas otras monedas.</div>'}
   <form id="rateForm" class="grid" style="margin-top:10px;align-items:end"><label>Moneda<input name="code" list="codes" maxlength="3" placeholder="USD" style="text-transform:uppercase" required></label><label>Valor en ${esc(st.base)}<input name="val" class="num" type="text" inputmode="decimal" placeholder="0" required></label><div class="full"><button class="btn">Agregar / actualizar moneda</button></div><datalist id="codes">${PRESETS.map(c=>`<option>${c}</option>`).join('')}</datalist></form></div>`;
   h+=`<div class="card"><div class="hd"><h2>Respaldo de tus datos</h2></div><p class="small mute" style="margin:0 0 10px">Tus datos se guardan automáticamente en tu cuenta (${persist.ref?'sincronizado':'solo en este navegador'}). El respaldo descargado va cifrado y protegido con una contraseña (mínimo 4 caracteres, letras o números): sin ella no se puede abrir, así que guárdala bien.</p><div class="btns" style="justify-content:flex-start;margin:0"><button class="btn sm" data-act="exportJson">Descargar respaldo cifrado</button><button class="btn sm" data-act="exportCsv">Exportar gastos (.csv)</button><button class="btn sm" data-act="showJson">Copiar datos (JSON)</button></div>
-  <div style="margin-top:14px"><label>Restaurar desde un archivo de respaldo (.json)<input type="file" accept=".json,application/json" id="impFile"></label></div></div>`;
+  <div style="margin-top:14px"><label>Restaurar desde un archivo de respaldo (.txt o .json)<input type="file" accept=".txt,.json,text/plain,application/json" id="impFile"></label></div></div>`;
   h+=`<div class="card"><div class="hd"><h2>Zona de riesgo</h2></div><button class="btn dng sm" data-act="reset">Borrar todos mis datos</button></div>`;
   return h;
 }
@@ -412,7 +412,7 @@ async function download(filename,data){
     catch(e){if(e&&e.code==='declined')return}
   }
   try{
-    const type=filename.endsWith('.csv')?'text/csv;charset=utf-8':'application/json';
+    const type=filename.endsWith('.csv')?'text/csv;charset=utf-8':filename.endsWith('.txt')?'text/plain;charset=utf-8':'application/json';
     const url=URL.createObjectURL(new Blob([data],{type}));
     const a=document.createElement('a');a.href=url;a.download=filename;a.style.display='none';
     document.body.appendChild(a);a.click();a.remove();
@@ -468,7 +468,7 @@ document.addEventListener('click',e=>{
     case 'doConfirm':{const f=modalCfg&&modalCfg.confirm;closeModal();if(f)f()}break;
     case 'rmRate':askConfirm('¿Quitar '+id+' de tus tipos de cambio?',()=>{delete S.settings.rates[id];commit()},'Quitar');break;
     case 'exportJson':askPassword({title:'Proteger el respaldo con contraseña',confirm:true,label:'Descargar',onOk:async pw=>{
-      try{const text=await encryptBackup(S,pw);download('finanzas-respaldo-'+todayStr()+'.enc.json',text)}catch(err){toast('No se pudo cifrar el respaldo')}}});break;
+      try{const text=await encryptBackup(S,pw);download('finanzas-respaldo-'+todayStr()+'.txt',text)}catch(err){toast('No se pudo cifrar el respaldo')}}});break;
     case 'exportCsv':{
       const rows=[['fecha','descripcion','categoria','monto','moneda','monto_en_'+base()]];
       [...S.expenses].sort((a,b)=>a.date.localeCompare(b.date)).forEach(x=>rows.push([x.date,x.name,x.cat,x.amount,x.cur,Math.round(toBase(x.amount,x.cur)*100)/100]));
