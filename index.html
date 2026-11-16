@@ -388,8 +388,8 @@ function settingsView(){
   let h=`<div class="card"><div class="hd"><h2>Moneda</h2></div><div class="grid"><label>Moneda base (tus cuentas)<select data-set="base">${opts(st.base)}</select></label><label>Mostrar montos en<select data-set="display">${opts(st.display)}</select></label></div><p class="small mute" style="margin:10px 0 0">Puedes registrar cada gasto en la moneda que quieras; todo se convierte con los tipos de cambio de abajo y se muestra en la moneda elegida.</p></div>`;
   h+=`<div class="card"><div class="hd"><h2>Tipos de cambio</h2>${st.ratesUpdated?`<span class="small mute">Actualizado ${esc(st.ratesUpdated)}</span>`:''}</div><p class="small mute" style="margin:0 0 8px">Indica cuánto vale 1 unidad de cada moneda en <b>${esc(st.base)}</b>. Los valores son manuales: actualízalos cuando cambie el dólar u otra moneda.</p>${rates.length?rates.map(([c,r])=>`<div class="rate"><span style="min-width:62px">1 ${esc(c)} =</span><input class="num" type="text" inputmode="decimal" data-rate="${esc(c)}" value="${esc(fmtInput(r))}"><span>${esc(st.base)}</span><button class="btn sm dng x" data-act="rmRate" data-id="${esc(c)}">Quitar</button></div>`).join(''):'<div class="empty">Aún no agregas otras monedas.</div>'}
   <form id="rateForm" class="grid" style="margin-top:10px;align-items:end"><label>Moneda<input name="code" list="codes" maxlength="3" placeholder="USD" style="text-transform:uppercase" required></label><label>Valor en ${esc(st.base)}<input name="val" class="num" type="text" inputmode="decimal" placeholder="0" required></label><div class="full"><button class="btn">Agregar / actualizar moneda</button></div><datalist id="codes">${PRESETS.map(c=>`<option>${c}</option>`).join('')}</datalist></form></div>`;
-  h+=`<div class="card"><div class="hd"><h2>Respaldo de tus datos</h2></div><p class="small mute" style="margin:0 0 10px">Tus datos se guardan automáticamente en tu cuenta (${persist.ref?'sincronizado':'solo en este navegador'}). Además puedes descargar una copia o restaurarla.</p><div class="btns" style="justify-content:flex-start;margin:0"><button class="btn sm" data-act="exportJson">Descargar copia (.json)</button><button class="btn sm" data-act="exportCsv">Exportar gastos (.csv)</button><button class="btn sm" data-act="showJson">Ver / copiar JSON</button></div>
-  <div style="margin-top:14px"><label>Restaurar desde un archivo .json<input type="file" accept=".json,application/json" id="impFile"></label></div></div>`;
+  h+=`<div class="card"><div class="hd"><h2>Respaldo de tus datos</h2></div><p class="small mute" style="margin:0 0 10px">Tus datos se guardan automáticamente en tu cuenta (${persist.ref?'sincronizado':'solo en este navegador'}). El respaldo descargado va cifrado y protegido con una contraseña (mínimo 4 caracteres, letras o números): sin ella no se puede abrir, así que guárdala bien.</p><div class="btns" style="justify-content:flex-start;margin:0"><button class="btn sm" data-act="exportJson">Descargar respaldo cifrado</button><button class="btn sm" data-act="exportCsv">Exportar gastos (.csv)</button><button class="btn sm" data-act="showJson">Copiar datos (JSON)</button></div>
+  <div style="margin-top:14px"><label>Restaurar desde un archivo de respaldo (.json)<input type="file" accept=".json,application/json" id="impFile"></label></div></div>`;
   h+=`<div class="card"><div class="hd"><h2>Zona de riesgo</h2></div><button class="btn dng sm" data-act="reset">Borrar todos mis datos</button></div>`;
   return h;
 }
@@ -416,6 +416,28 @@ function showJson(text){
   $('#modal').innerHTML=`<div class="overlay" data-act="closeModal"><div class="sheet"><h3>Copia de tus datos</h3><textarea id="jsonTa" readonly>${esc(t)}</textarea><div class="btns"><span class="sp"></span><button class="btn" data-act="closeModal">Cerrar</button><button class="btn pri" data-act="copyJson">Copiar</button></div></div></div>`;
   modalCfg={};
 }
+const b64=u=>{let s='';u.forEach(b=>s+=String.fromCharCode(b));return btoa(s)};
+const unb64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+async function deriveKey(pw,salt,iter){
+  const km=await crypto.subtle.importKey('raw',new TextEncoder().encode(pw),'PBKDF2',false,['deriveKey']);
+  return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:iter,hash:'SHA-256'},km,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+}
+async function encryptBackup(obj,pw){
+  const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12)),iter=200000;
+  const key=await deriveKey(pw,salt,iter);
+  const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},key,new TextEncoder().encode(JSON.stringify(obj))));
+  return JSON.stringify({app:'finanzas-mensuales',v:1,enc:'AES-256-GCM',kdf:'PBKDF2-SHA256',iter,salt:b64(salt),iv:b64(iv),data:b64(ct)});
+}
+async function decryptBackup(o,pw){
+  const key=await deriveKey(pw,unb64(o.salt),o.iter||200000);
+  const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(o.iv)},key,unb64(o.data));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+function askPassword({title,confirm,label,onOk}){
+  modalCfg={onPw:onOk,needConfirm:!!confirm};
+  $('#modal').innerHTML=`<div class="overlay" data-act="closeModal"><form class="sheet" id="pwForm" autocomplete="off"><h3>${esc(title)}</h3><div class="grid"><label class="full">Contraseña (mínimo 4 caracteres)<input name="pw" type="password" minlength="4" required autocomplete="new-password"></label>${confirm?'<label class="full">Repite la contraseña<input name="pw2" type="password" minlength="4" required autocomplete="new-password"></label>':''}<label class="chk"><input type="checkbox" id="showPw"> Mostrar contraseña</label></div><div class="btns"><span class="sp"></span><button type="button" class="btn" data-act="closeModal">Cancelar</button><button class="btn pri">${esc(label||'Continuar')}</button></div></form></div>`;
+  $('#pwForm [name=pw]').focus();
+}
 function csvEsc(v){v=String(v??'');return /[",\n;]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v}
 document.addEventListener('click',e=>{
   const el=e.target.closest('[data-act]');if(!el)return;
@@ -436,7 +458,8 @@ document.addEventListener('click',e=>{
     case 'delModal':if(modalCfg&&modalCfg.onDelete){const f=modalCfg.onDelete;closeModal();f()}break;
     case 'doConfirm':{const f=modalCfg&&modalCfg.confirm;closeModal();if(f)f()}break;
     case 'rmRate':askConfirm('¿Quitar '+id+' de tus tipos de cambio?',()=>{delete S.settings.rates[id];commit()},'Quitar');break;
-    case 'exportJson':download('finanzas-respaldo-'+todayStr()+'.json',JSON.stringify(S,null,2));break;
+    case 'exportJson':askPassword({title:'Proteger el respaldo con contraseña',confirm:true,label:'Descargar',onOk:async pw=>{
+      try{const text=await encryptBackup(S,pw);download('finanzas-respaldo-'+todayStr()+'.enc.json',text)}catch(err){toast('No se pudo cifrar el respaldo')}}});break;
     case 'exportCsv':{
       const rows=[['fecha','descripcion','categoria','monto','moneda','monto_en_'+base()]];
       [...S.expenses].sort((a,b)=>a.date.localeCompare(b.date)).forEach(x=>rows.push([x.date,x.name,x.cat,x.amount,x.cur,Math.round(toBase(x.amount,x.cur)*100)/100]));
@@ -449,6 +472,12 @@ document.addEventListener('click',e=>{
 document.addEventListener('submit',e=>{
   const f=e.target;e.preventDefault();
   if(f.id==='sheetForm'&&modalCfg&&modalCfg.onSave){modalCfg.onSave(readForm(f,modalCfg.fields))}
+  else if(f.id==='pwForm'&&modalCfg&&modalCfg.onPw){
+    const pw=f.elements.pw.value;
+    if(pw.length<4){toast('La contraseña debe tener al menos 4 caracteres');return}
+    if(modalCfg.needConfirm&&f.elements.pw2.value!==pw){toast('Las contraseñas no coinciden');return}
+    const fn=modalCfg.onPw;closeModal();fn(pw);
+  }
   else if(f.id==='qa'){
     const v=readForm(f,ENT.expense.fields());
     if(!(v.amount>0)){toast('Ingresa un monto');return}
@@ -480,6 +509,7 @@ document.addEventListener('input',e=>{
 });
 document.addEventListener('change',e=>{
   const t=e.target;
+  if(t.id==='showPw'){document.querySelectorAll('#pwForm input[name^=pw]').forEach(i=>{i.type=t.checked?'text':'password'});return}
   if(t.dataset.save){
     const sv=S.settings.save,k=t.dataset.save;
     sv[k]=k==='value'?(parseNum(t.value)||0):t.value;
@@ -500,11 +530,18 @@ document.addEventListener('change',e=>{
     r.onload=()=>{
       try{
         const o=JSON.parse(r.result);
-        if(!o||typeof o!=='object'||!o.settings||!Array.isArray(o.expenses))throw 0;
-        askConfirm('Esto reemplazará tus datos actuales por los del archivo. ¿Continuar?',()=>{S=normalize(o);commit();toast('Datos restaurados')},'Restaurar');
+        const restore=d=>{
+          if(!d||typeof d!=='object'||!d.settings||!Array.isArray(d.expenses)){toast('El archivo no es un respaldo válido');return}
+          askConfirm('Esto reemplazará tus datos actuales por los del archivo. ¿Continuar?',()=>{S=normalize(d);commit();toast('Datos restaurados')},'Restaurar');
+        };
+        if(o&&o.salt&&o.iv&&o.data&&o.enc){
+          askPassword({title:'Contraseña del respaldo',label:'Abrir',onOk:async pw=>{
+            let d;try{d=await decryptBackup(o,pw)}catch(err){toast('Contraseña incorrecta o archivo dañado');return}
+            restore(d)}});
+        }else restore(o);
       }catch(err){toast('El archivo no es un respaldo válido')}
     };
-    r.readAsText(t.files[0]);
+    r.readAsText(t.files[0]);t.value='';
   }
 });
 try{if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(()=>{})}catch(e){}
