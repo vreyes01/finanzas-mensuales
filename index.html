@@ -405,11 +405,20 @@ function render(){
 }
 
 /* ---------- eventos ---------- */
-function download(filename,data){
-  return (async()=>{
-    try{const d=await claude.use('downloads');if(!d)throw 0;await d.save({filename,data});toast('Listo')}
-    catch(e){if(e&&e.code==='declined')return;showJson(typeof data==='string'?data:'')}
-  })();
+async function download(filename,data){
+  /* dentro de Claude se usa su capacidad de descargas; en el sitio publicado, un enlace de descarga normal */
+  if(typeof claude!=='undefined'){
+    try{const d=await claude.use('downloads');if(d){await d.save({filename,data});toast('Listo');return}}
+    catch(e){if(e&&e.code==='declined')return}
+  }
+  try{
+    const type=filename.endsWith('.csv')?'text/csv;charset=utf-8':'application/json';
+    const url=URL.createObjectURL(new Blob([data],{type}));
+    const a=document.createElement('a');a.href=url;a.download=filename;a.style.display='none';
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),10000);
+    toast('Descargando '+filename);
+  }catch(e){showJson(data)}
 }
 function showJson(text){
   const t=text||JSON.stringify(S,null,2);
